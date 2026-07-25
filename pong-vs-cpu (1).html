@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>PONG</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+  }
+
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  #topBar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 800px;
+    margin-bottom: 12px;
+    user-select: none;
+  }
+
+  #scoreboard {
+    display: flex;
+    gap: 40px;
+    color: #fff;
+    font-size: 48px;
+    letter-spacing: 4px;
+  }
+
+  #difficulty {
+    display: flex;
+    gap: 6px;
+  }
+
+  .diffBtn {
+    background: #000;
+    color: #fff;
+    border: 1px solid #fff;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
+    padding: 6px 12px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+
+  .diffBtn:hover {
+    opacity: 1;
+  }
+
+  .diffBtn.active {
+    background: #fff;
+    color: #000;
+    opacity: 1;
+  }
+
+  #gameCanvas {
+    background: #000;
+    border: 2px solid #fff;
+  }
+
+  #message {
+    color: #fff;
+    margin-top: 14px;
+    font-size: 16px;
+    letter-spacing: 2px;
+    opacity: 0.8;
+    text-align: center;
+    user-select: none;
+  }
+
+  kbd {
+    border: 1px solid #fff;
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <div id="topBar">
+    <div id="scoreboard">
+      <span id="scoreLeft">0</span>
+      <span id="scoreRight">0</span>
+    </div>
+    <div id="difficulty">
+      <button class="diffBtn" data-level="easy">EASY</button>
+      <button class="diffBtn active" data-level="medium">MEDIUM</button>
+      <button class="diffBtn" data-level="hard">HARD</button>
+    </div>
+  </div>
+  <canvas id="gameCanvas" width="800" height="500"></canvas>
+  <div id="message">
+    <kbd>W</kbd> / <kbd>S</kbd> to move &nbsp;&nbsp;&nbsp; <kbd>Space</kbd> to start/pause
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const W = canvas.width;
+const H = canvas.height;
+
+const PADDLE_WIDTH = 10;
+const PADDLE_HEIGHT = 50;
+const PADDLE_MARGIN = 20;
+const BALL_SIZE = 10;
+const PLAYER_SPEED = 6;
+const WIN_SCORE = 11;
+
+// Difficulty presets: cpuSpeed = max px/frame the CPU paddle can move,
+// reaction = 0..1 how much of the distance to target it closes each frame (lower = laggier),
+// error = px of random aim noise added to CPU's target
+const DIFFICULTY = {
+  easy:   { cpuSpeed: 3.5, reaction: 0.06, error: 45 },
+  medium: { cpuSpeed: 5,   reaction: 0.10, error: 22 },
+  hard:   { cpuSpeed: 7,   reaction: 0.18, error: 6  }
+};
+let currentDifficulty = 'medium';
+
+let leftY = H / 2 - PADDLE_HEIGHT / 2;  // player
+let rightY = H / 2 - PADDLE_HEIGHT / 2; // cpu
+let cpuTargetY = rightY;
+
+let ball = {
+  x: W / 2,
+  y: H / 2,
+  vx: 5,
+  vy: 3
+};
+
+let scoreLeft = 0;
+let scoreRight = 0;
+let running = false;
+let gameOver = false;
+
+const keys = {};
+document.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (gameOver) {
+      resetGame();
+    } else {
+      running = !running;
+    }
+  }
+});
+document.addEventListener('keyup', (e) => {
+  keys[e.code] = false;
+});
+
+document.querySelectorAll('.diffBtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.diffBtn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentDifficulty = btn.dataset.level;
+  });
+});
+
+function resetBall(direction) {
+  ball.x = W / 2;
+  ball.y = H / 2;
+  ball.vx = 5 * direction;
+  ball.vy = (Math.random() * 4 - 2) || 3;
+}
+
+function resetGame() {
+  scoreLeft = 0;
+  scoreRight = 0;
+  leftY = H / 2 - PADDLE_HEIGHT / 2;
+  rightY = H / 2 - PADDLE_HEIGHT / 2;
+  gameOver = false;
+  running = false;
+  resetBall(Math.random() > 0.5 ? 1 : -1);
+  updateScoreboard();
+}
+
+function updateScoreboard() {
+  document.getElementById('scoreLeft').textContent = scoreLeft;
+  document.getElementById('scoreRight').textContent = scoreRight;
+}
+
+function updateCPU() {
+  const diff = DIFFICULTY[currentDifficulty];
+
+  // Only re-aim while ball is heading toward the CPU, to mimic reaction/tracking limits.
+  // When ball is heading away, drift back toward center.
+  if (ball.vx > 0) {
+    cpuTargetY = ball.y + BALL_SIZE / 2 - PADDLE_HEIGHT / 2 + (Math.random() * 2 - 1) * diff.error;
+  } else {
+    cpuTargetY = H / 2 - PADDLE_HEIGHT / 2;
+  }
+
+  const diffY = cpuTargetY - rightY;
+  let move = diffY * diff.reaction;
+  move = Math.max(-diff.cpuSpeed, Math.min(diff.cpuSpeed, move));
+  rightY += move;
+  rightY = Math.max(0, Math.min(H - PADDLE_HEIGHT, rightY));
+}
+
+function update() {
+  if (!running || gameOver) return;
+
+  // Player paddle
+  if (keys['KeyW'] || keys['ArrowUp']) leftY -= PLAYER_SPEED;
+  if (keys['KeyS'] || keys['ArrowDown']) leftY += PLAYER_SPEED;
+  leftY = Math.max(0, Math.min(H - PADDLE_HEIGHT, leftY));
+
+  updateCPU();
+
+  // Ball movement
+  ball.x += ball.vx;
+  ball.y += ball.vy;
+
+  // Top/bottom wall bounce
+  if (ball.y <= 0 || ball.y + BALL_SIZE >= H) {
+    ball.vy *= -1;
+    ball.y = Math.max(0, Math.min(H - BALL_SIZE, ball.y));
+  }
+
+  // Left paddle (player) collision
+  if (
+    ball.x <= PADDLE_MARGIN + PADDLE_WIDTH &&
+    ball.x + BALL_SIZE >= PADDLE_MARGIN &&
+    ball.y + BALL_SIZE >= leftY &&
+    ball.y <= leftY + PADDLE_HEIGHT &&
+    ball.vx < 0
+  ) {
+    ball.x = PADDLE_MARGIN + PADDLE_WIDTH;
+    ball.vx *= -1.05;
+    const hitPos = (ball.y + BALL_SIZE / 2 - (leftY + PADDLE_HEIGHT / 2)) / (PADDLE_HEIGHT / 2);
+    ball.vy = hitPos * 5;
+  }
+
+  // Right paddle (CPU) collision
+  if (
+    ball.x + BALL_SIZE >= W - PADDLE_MARGIN - PADDLE_WIDTH &&
+    ball.x <= W - PADDLE_MARGIN &&
+    ball.y + BALL_SIZE >= rightY &&
+    ball.y <= rightY + PADDLE_HEIGHT &&
+    ball.vx > 0
+  ) {
+    ball.x = W - PADDLE_MARGIN - PADDLE_WIDTH - BALL_SIZE;
+    ball.vx *= -1.05;
+    const hitPos = (ball.y + BALL_SIZE / 2 - (rightY + PADDLE_HEIGHT / 2)) / (PADDLE_HEIGHT / 2);
+    ball.vy = hitPos * 5;
+  }
+
+  // Scoring
+  if (ball.x < 0) {
+    scoreRight++;
+    updateScoreboard();
+    if (scoreRight >= WIN_SCORE) {
+      gameOver = true;
+      running = false;
+    } else {
+      resetBall(1);
+      running = false;
+    }
+  } else if (ball.x > W) {
+    scoreLeft++;
+    updateScoreboard();
+    if (scoreLeft >= WIN_SCORE) {
+      gameOver = true;
+      running = false;
+    } else {
+      resetBall(-1);
+      running = false;
+    }
+  }
+}
+
+function drawNet() {
+  ctx.fillStyle = '#fff';
+  const dashHeight = 12;
+  const gap = 10;
+  let y = 0;
+  while (y < H) {
+    ctx.fillRect(W / 2 - 1, y, 2, dashHeight);
+    y += dashHeight + gap;
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  drawNet();
+
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(PADDLE_MARGIN, leftY, PADDLE_WIDTH, PADDLE_HEIGHT);
+  ctx.fillRect(W - PADDLE_MARGIN - PADDLE_WIDTH, rightY, PADDLE_WIDTH, PADDLE_HEIGHT);
+  ctx.fillRect(ball.x, ball.y, BALL_SIZE, BALL_SIZE);
+
+  if (!running && !gameOver) {
+    ctx.font = '24px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('PRESS SPACE', W / 2, H / 2 - 40);
+  }
+
+  if (gameOver) {
+    ctx.font = '32px "Courier New", monospace';
+    ctx.textAlign = 'center';
+    const winner = scoreLeft > scoreRight ? 'YOU WIN' : 'CPU WINS';
+    ctx.fillText(winner, W / 2, H / 2 - 40);
+    ctx.font = '18px "Courier New", monospace';
+    ctx.fillText('PRESS SPACE TO RESTART', W / 2, H / 2);
+  }
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resetBall(1);
+updateScoreboard();
+loop();
+</script>
+
+</body>
+</html>
